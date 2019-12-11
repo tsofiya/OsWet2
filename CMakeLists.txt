@@ -3,4 +3,4 @@ project(OsWet2)
 
 set(CMAKE_CXX_STANDARD 11)
 
-add_executable(OsWet2 main.cpp)
+add_executable(OsWet2 main.cpp malloc_2.cpp)
