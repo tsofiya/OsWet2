@@ -1,7 +1,8 @@
+//
+// Created by student on 12/12/19.
+//
 
 #include <unistd.h>
-#include <cstring>
-
 
 
 struct MallocMetadata{
@@ -12,31 +13,29 @@ struct MallocMetadata{
 };
 
 //Global variables:
-MallocMetadata* BlockList=NULL;
-MallocMetadata* BlockListTail=NULL;
-size_t free_blocks=0;
-size_t free_bytes=0;
-size_t allocated_blocks=0;
-size_t allocated_bytes=0;
+MallocMetadata* BlockList;
+MallocMetadata* BlockListTail; //"Wilderness"
+
+size_t free_blocks;
+size_t free_bytes;
+size_t allocated_blocks;
+size_t allocated_bytes;
 
 //Functions:
 static void* getStart(MallocMetadata* block){
     block++;
 }
-
 static size_t getSize(MallocMetadata* block);
 static MallocMetadata* findBlock(size_t s){
-    MallocMetadata *ptr= BlockList;
-    while (ptr!=NULL){
-        if (ptr->is_free && s<=ptr->size){
-            return ptr;
-        }
-        ptr=ptr->next;
+    MallocMetadata* curr=BlockList;
+    while(curr!=NULL && curr->size<s){
+        curr=curr->next;
     }
-    return NULL;
+    if(!curr){
+        return NULL;
+    }
+    return curr;
 }
-
-
 static bool UnFree(MallocMetadata* block){
     block->is_free=false;
     free_blocks--;
@@ -88,10 +87,44 @@ static MallocMetadata * allocateMetadataAndMem(size_t s){
 
 void freeMetaData(MallocMetadata* metadata){
     metadata->is_free=true;
+    allocated_blocks--;
+    allocated_bytes-=metadata->size;
     free_blocks++;
     free_bytes+=metadata->size;
 }
 
+
+MallocMetadata* split(MallocMetadata* block, size_t size){
+    size_t total_size= block->size;
+    MallocMetadata* new_block= (MallocMetadata*)(block+sizeof(MallocMetadata)+ size);
+    new_block->size=total_size-size-sizeof(MallocMetadata);
+    new_block->is_free=true;
+    new_block->next=block->next;
+    new_block->prev=block;
+    block->next=new_block;
+    block->size=size;
+    allocated_blocks++;
+    allocated_bytes=allocated_bytes-sizeof(MallocMetadata);
+    free_blocks++;
+    free_bytes=free_bytes-sizeof(MallocMetadata);
+    return block;
+}
+
+MallocMetadata* enlargeWilderness(size_t s){
+    if (s<0 || s>100000000){
+        return NULL;
+    }
+    size_t addition=s-BlockListTail->size;
+    void * ptr= sbrk(addition);
+    if((ptr==(void*)(-1))){
+        return NULL;
+    }
+
+    allocated_bytes+= addition;
+    BlockListTail->size=s;
+    BlockListTail->is_free= false;
+    return BlockListTail;
+}
 
 void* smalloc(size_t size){
 
@@ -101,16 +134,21 @@ void* smalloc(size_t size){
     }
     void* ptr;
     MallocMetadata* block= findBlock(size);
-    if(!block){
-        block=allocateMetadataAndMem(size);
+    if(!block) {
+        if (BlockListTail == NULL || BlockListTail->is_free == false) {
+            enlargeWilderness(size);
+        } else {
+            block = allocateMetadataAndMem(size);
+        }
     }
     else{
-        UnFree(block);
+        if(block->size>=128+sizeof(MallocMetadata)+size) {
+            block = split(block, size);
+        }
     }
+    UnFree(block);
     ptr=getStart(block);
     return ptr;
-
-
 }
 
 
@@ -139,45 +177,4 @@ size_t _num_allocated_blocks(){
 
 size_t _num_meta_data_bytes(){
     return (allocated_blocks)*sizeof(MallocMetadata);
-}
-
-void* scalloc(size_t num, size_t size){
-    MallocMetadata* metadata= findBlock(num*size);
-    if (metadata== NULL){
-        metadata= allocateMetadataAndMem(num*size);
-        if (metadata==NULL)
-            return NULL;
-    }
-    return memset(getStart(metadata), 0, num*size);
-}
-
-void* srealloc(void* oldp, size_t size){
-    if (oldp==NULL)
-        return smalloc(size);
-    if (size==0)
-        return NULL;
-
-    MallocMetadata* oldMetaData= getMetaDataByPointer(oldp);
-    if (oldMetaData->size>=size)
-        return oldMetaData++;
-    MallocMetadata* newMetaData= findBlock(size);
-    if (newMetaData==NULL)
-        newMetaData= allocateMetadataAndMem(size);
-    memcpy(getStart(newMetaData), getStart(oldMetaData), oldMetaData->size);
-    oldMetaData->is_free= true;
-    freeMetaData(oldMetaData);
-    return newMetaData;
-}
-
-
-size_t _num_free_bytes(){
-    return free_bytes;
-}
-
-size_t _num_allocated_bytes(){
-    return allocated_bytes;
-}
-
-size_t _size_meta_data(){
-    return sizeof(MallocMetadata);
 }
