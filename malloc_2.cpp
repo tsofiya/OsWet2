@@ -1,7 +1,7 @@
 
 #include <unistd.h>
 #include <cstring>
-
+#include <iostream>
 
 
 struct MallocMetadata{
@@ -21,14 +21,14 @@ size_t allocated_bytes=0;
 
 //Functions:
 static void* getStart(MallocMetadata* block){
-    block++;
+    return (block+ sizeof(MallocMetadata));
 }
 
 static size_t getSize(MallocMetadata* block);
 static MallocMetadata* findBlock(size_t s){
     MallocMetadata *ptr= BlockList;
     while (ptr!=NULL){
-        if (ptr->is_free && s<=ptr->size){
+        if (ptr->is_free==true && s<=ptr->size){
             return ptr;
         }
         ptr=ptr->next;
@@ -45,10 +45,10 @@ static bool UnFree(MallocMetadata* block){
 
 
 
-static MallocMetadata* getMetaDataByPointer(void* mem){
+static MallocMetadata* getMetaDataByPointer(void* mem){ //this func causes SEGFAULT
     MallocMetadata* ptr= BlockList;
     while(ptr!=NULL){
-        if (ptr++==mem)//TODO: ask about ++
+        if (ptr+sizeof(MallocMetadata)==mem)//TODO: ask about ++
             return ptr;
         ptr= ptr->next;
     }
@@ -68,6 +68,7 @@ static MallocMetadata * allocateMetadataAndMem(size_t s){
     allocated_bytes+= s;
     allocated_blocks++;
 
+    //ptr=sbrk(0); //addition
     MallocMetadata * metadata = (MallocMetadata*)ptr;
     metadata->size= s;
     metadata->is_free= false;
@@ -152,18 +153,26 @@ void* scalloc(size_t num, size_t size){
 }
 
 void* srealloc(void* oldp, size_t size){
-    if (oldp==NULL)
-        return smalloc(size);
     if (size==0)
         return NULL;
 
+    if (oldp==NULL)
+        return smalloc(size);
+
+
     MallocMetadata* oldMetaData= getMetaDataByPointer(oldp);
-    if (oldMetaData->size>=size)
-        return oldMetaData++;
+
+    if (oldMetaData->size>=size) {
+
+        return (oldMetaData + sizeof(MallocMetadata));
+    }
     MallocMetadata* newMetaData= findBlock(size);
-    if (newMetaData==NULL)
-        newMetaData= allocateMetadataAndMem(size);
-    memcpy(getStart(newMetaData), getStart(oldMetaData), oldMetaData->size);
+    if (newMetaData==NULL) {
+
+        newMetaData = allocateMetadataAndMem(size);
+
+    }
+    memcpy((void*)(getStart(newMetaData)), (void*) (getStart(oldMetaData)), oldMetaData->size);
     oldMetaData->is_free= true;
     freeMetaData(oldMetaData);
     return newMetaData;
