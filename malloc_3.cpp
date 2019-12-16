@@ -12,11 +12,9 @@ struct MallocMetadata{
     MallocMetadata* prev;
 };
 
-
-
 //Global variables:
 MallocMetadata* BlockList=NULL;
-MallocMetadata* BlockListTail=NULL; //wilderness
+MallocMetadata* BlockListTail=NULL;
 size_t free_blocks=0;
 size_t free_bytes=0;
 size_t allocated_blocks=0;
@@ -24,14 +22,13 @@ size_t allocated_bytes=0;
 
 //Functions:
 static void* getStart(MallocMetadata* block){
-    block++;
+    return (block+ sizeof(MallocMetadata));
 }
-
 static size_t getSize(MallocMetadata* block);
 static MallocMetadata* findBlock(size_t s){
     MallocMetadata *ptr= BlockList;
     while (ptr!=NULL){
-        if (ptr->is_free && s<=ptr->size){
+        if (ptr->is_free==true && s<=ptr->size){
             return ptr;
         }
         ptr=ptr->next;
@@ -48,10 +45,11 @@ static bool UnFree(MallocMetadata* block){
 
 
 
-static MallocMetadata* getMetaDataByPointer(void* mem){
+
+static MallocMetadata* getMetaDataByPointer(void* mem){ //this func causes SEGFAULT
     MallocMetadata* ptr= BlockList;
     while(ptr!=NULL){
-        if (ptr++==mem)//TODO: ask about ++
+        if (ptr+sizeof(MallocMetadata)==mem)//TODO: ask about ++
             return ptr;
         ptr= ptr->next;
     }
@@ -63,7 +61,6 @@ static MallocMetadata * allocateMetadataAndMem(size_t s){
     if (s<0 || s>100000000){
         return NULL;
     }
-
     void * ptr= sbrk(s+sizeof(MallocMetadata));
     if((ptr==(void*)(-1))){
         return NULL;
@@ -72,6 +69,7 @@ static MallocMetadata * allocateMetadataAndMem(size_t s){
     allocated_bytes+= s;
     allocated_blocks++;
 
+    //ptr=sbrk(0); //addition
     MallocMetadata * metadata = (MallocMetadata*)ptr;
     metadata->size= s;
     metadata->is_free= false;
@@ -87,23 +85,22 @@ static MallocMetadata * allocateMetadataAndMem(size_t s){
         metadata->next=NULL;
         BlockListTail= metadata;
     }
-        return metadata;
-
-
-
+    return metadata;
 }
 
-void * allocateMmap(size_t s){
-        void * ptr= mmap(0, s+ sizeof(unsigned long long), PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
-        if((ptr==(void*)(-1))){
-            return NULL;
-        }
 
-        unsigned long long * l = (unsigned long long*)ptr;
-        *l=s;
-        allocated_blocks++;
-        allocated_bytes+=s;
-        return ptr;
+
+void * allocateMmap(size_t s){
+    void * ptr= mmap(0, s+ sizeof(unsigned long long), PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+    if((ptr==(void*)(-1))){
+        return NULL;
+    }
+
+    unsigned long long * l = (unsigned long long*)ptr;
+    *l=s;
+    allocated_blocks++;
+    allocated_bytes+=s;
+    return ptr;
 }
 
 void freeMetaData(MallocMetadata* metadata){
@@ -230,22 +227,23 @@ void* scalloc(size_t num, size_t size){
     return memset(getStart(metadata), 0, num*size);
 }
 
-void* srealloc(void* oldp, size_t size){
-    if (oldp==NULL)
+void* srealloc(void* oldp, size_t size) {
+    if (oldp == NULL){
         return smalloc(size);
-    if (size==0)
+    }
+    if (size==0) {
         return NULL;
-
+    }
     MallocMetadata* oldMetaData= getMetaDataByPointer(oldp);
     if (oldMetaData->size>=size)
-        return oldMetaData++;
+        return (oldMetaData + sizeof(MallocMetadata));
     MallocMetadata* newMetaData= findBlock(size);
     if (newMetaData==NULL)
         newMetaData= allocateMetadataAndMem(size);
     memcpy(getStart(newMetaData), getStart(oldMetaData), oldMetaData->size);
     oldMetaData->is_free= true;
     freeMetaData(oldMetaData);
-    return newMetaData;
+    return (newMetaData+sizeof(MallocMetadata));
 }
 
 
@@ -260,3 +258,4 @@ size_t _num_allocated_bytes(){
 size_t _size_meta_data(){
     return sizeof(MallocMetadata);
 }
+ 
