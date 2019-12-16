@@ -2,6 +2,7 @@
 #include <unistd.h>
 #include <cstring>
 #include <iostream>
+#include "smalloc.h"
 
 
 struct MallocMetadata{
@@ -90,7 +91,7 @@ static MallocMetadata * allocateMetadataAndMem(size_t s){
 void freeMetaData(MallocMetadata* metadata){
     metadata->is_free=true;
     free_blocks++;
-    free_bytes+=metadata->size;
+    free_bytes=free_bytes+(metadata->size);
 }
 
 
@@ -156,26 +157,22 @@ void* srealloc(void* oldp, size_t size){
     if (size==0)
         return NULL;
 
-    if (oldp==NULL)
+    if (oldp==NULL) {
         return smalloc(size);
-
+    }
 
     MallocMetadata* oldMetaData= getMetaDataByPointer(oldp);
-
     if (oldMetaData->size>=size) {
-
         return (oldMetaData + sizeof(MallocMetadata));
     }
     MallocMetadata* newMetaData= findBlock(size);
     if (newMetaData==NULL) {
-
         newMetaData = allocateMetadataAndMem(size);
-
     }
     memcpy((void*)(getStart(newMetaData)), (void*) (getStart(oldMetaData)), oldMetaData->size);
     oldMetaData->is_free= true;
     freeMetaData(oldMetaData);
-    return newMetaData;
+    return (newMetaData+sizeof(MallocMetadata));
 }
 
 
@@ -189,4 +186,13 @@ size_t _num_allocated_bytes(){
 
 size_t _size_meta_data(){
     return sizeof(MallocMetadata);
+}
+
+void printBlockList(){
+    MallocMetadata* current= BlockList;
+    while(current!=NULL){
+        std::cout<< "Metadata size: " << current->size <<" metadata is free? "<< current->is_free<<std::endl;
+        current=current->next;
+    }
+    std::cout<< "Done!" <<std::endl;
 }
