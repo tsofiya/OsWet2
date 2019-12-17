@@ -171,7 +171,7 @@ MallocMetadata* split(MallocMetadata* block, size_t size){
     block->size=size;
     allocated_blocks++;
     allocated_bytes=allocated_bytes-sizeof(MallocMetadata);
-    //free_blocks++;
+    free_blocks++;
     free_bytes=free_bytes-sizeof(MallocMetadata);
     return block;
 }
@@ -208,8 +208,11 @@ void* smalloc(size_t size) {
         if (!block) {
             MallocMetadata* tail=getListTail();
             if (tail != NULL && tail->is_free == true) {
+                int tail_size=tail->size;
                 block = enlargeWilderness(size);
-                UnFree(block);
+                //  UnFree(block);
+                free_blocks--;
+                free_bytes=free_bytes-tail_size;
             } else {
                 block = allocateMetadataAndMem(size);
                 //UnFree(block);
@@ -218,7 +221,7 @@ void* smalloc(size_t size) {
             if (block->size >= 128 + sizeof(MallocMetadata) + size) {
                 MallocMetadata *block_n = split(block, size);
                 block = block_n;
-                free_blocks++;
+                //free_blocks++;
             }
             UnFree(block);
         }
@@ -237,7 +240,9 @@ void sfree (void* p){
     MallocMetadata* metadata=getMetaDataByPointer(p);
     if (metadata==NULL){
         unsigned long long* ptr= (unsigned long long*)p;
-        ptr--;
+        // ptr--;
+        allocated_bytes=allocated_bytes-(*ptr);
+        allocated_blocks--;
         munmap(ptr, *ptr);
         return;
     }
@@ -289,12 +294,89 @@ void* srealloc(void* oldp, size_t size) {
         return NULL;
     }
     MallocMetadata* oldMetaData= getMetaDataByPointer(oldp);
-    if (oldMetaData->size>=size)
+    if (oldMetaData->size>=size) {
         return (oldMetaData + sizeof(MallocMetadata));
+    }
+    if(oldMetaData->next!=NULL && oldMetaData->next->is_free && (oldMetaData->size+oldMetaData->next->size>=size)){
+        size_t free_size=oldMetaData->next->size;
+        (oldMetaData->size)+=oldMetaData->next->size +sizeof(MallocMetadata);
+        oldMetaData->next=oldMetaData->next->next;
+        if(oldMetaData->next->next!=NULL){
+            oldMetaData->next->next->prev=oldMetaData;
+        }
+        allocated_blocks--;
+        free_blocks--;
+        allocated_bytes+=sizeof(MallocMetadata);
+        free_bytes=free_bytes-free_size;
+        if (oldMetaData->size >=150+size){
+            size_t freebytes=oldMetaData->size-size-sizeof(MallocMetadata);
+            split(oldMetaData, size);
+            free_bytes+=oldMetaData->next->size;
+            oldMetaData->next->is_free=true;
+        }
+        return (oldMetaData+sizeof(MallocMetadata));
+    }
+    else if(oldMetaData->prev!=NULL && oldMetaData->prev->is_free && (oldMetaData->size+oldMetaData->prev->size>=size)){
+        size_t free_size=oldMetaData->prev->size;
+        (oldMetaData->prev->size)+=oldMetaData->size +sizeof(MallocMetadata);
+        oldMetaData->prev->next=oldMetaData->next;
+        if(oldMetaData->next!=NULL){
+            oldMetaData->next->prev=oldMetaData->prev;
+        }
+        allocated_blocks--;
+        free_blocks--;
+        allocated_bytes+=sizeof(MallocMetadata);
+        free_bytes=free_bytes-free_size;
+        oldMetaData->prev->is_free=false;
+        memcpy(getStart(oldMetaData->prev), getStart(oldMetaData), oldMetaData->size);
+        if (oldMetaData->prev->size >=150+size){
+
+            split(oldMetaData->prev, size);
+            free_bytes+=oldMetaData->prev->next->size;
+            oldMetaData->prev->next->is_free=true;
+        }
+        return (getStart(oldMetaData->prev));
+    }
+
+
+    else if (oldMetaData->prev!=NULL && oldMetaData->prev->is_free && oldMetaData->next!=NULL && oldMetaData->next->is_free &&(oldMetaData->size+oldMetaData->prev->size+oldMetaData->next->size>=size)){
+        size_t free_size=oldMetaData->next->size+oldMetaData->prev->size;
+        oldMetaData->prev->size+=oldMetaData->size+oldMetaData->next->size+2*sizeof(MallocMetadata);
+        oldMetaData->prev->next=oldMetaData->next->next;
+        if (oldMetaData->next->next!=NULL){
+            oldMetaData->next->next->prev=oldMetaData->prev;
+        }
+        free_blocks=free_blocks-2;
+        allocated_bytes=allocated_bytes+2*sizeof(MallocMetadata);
+        free_bytes= free_bytes-free_size;
+        allocated_blocks=allocated_blocks-2;
+        oldMetaData->prev->is_free=false;
+        memcpy(getStart(oldMetaData->prev), getStart(oldMetaData), oldMetaData->size);
+        if (oldMetaData->prev->size >=150+size){
+
+            split(oldMetaData->prev, size);
+            free_bytes+=oldMetaData->prev->next->size;
+            oldMetaData->prev->next->is_free=true;
+        } //not sure if they meant size here
+        return (getStart(oldMetaData->prev));
+    }
+
+
+    MallocMetadata* tail=getListTail();
+    if(tail!=NULL && tail==oldMetaData){ //Wilderness case
+        MallocMetadata* newMetaData = enlargeWilderness(size);
+        return (newMetaData+sizeof(MallocMetadata));
+
+    }
+
     MallocMetadata* newMetaData= findBlock(size);
-    if (newMetaData==NULL)
-        newMetaData= allocateMetadataAndMem(size);
-    memcpy(getStart(newMetaData), getStart(oldMetaData), oldMetaData->size);
+    if (newMetaData==NULL) {
+        newMetaData = allocateMetadataAndMem(size);
+    }
+    if(newMetaData==NULL){
+        return NULL;
+    }
+    memcpy(getStart(newMetaData), getStart(oldMetaData), oldMetaData->size-32);
     oldMetaData->is_free= true;
     freeMetaData(oldMetaData);
     return (newMetaData+sizeof(MallocMetadata));
