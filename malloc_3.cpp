@@ -2,6 +2,8 @@
 #include <unistd.h>
 #include <cstring>
 #include <sys/mman.h>
+#include <iostream>
+#include "smalloc.h"
 
 
 
@@ -36,7 +38,17 @@ static MallocMetadata* findBlock(size_t s){
     return NULL;
 }
 
+MallocMetadata* getListTail(){
 
+    MallocMetadata* current=BlockList;
+    if(current==NULL){
+        return NULL;
+    }
+    while (current->next!=NULL){
+        current=current->next;
+    }
+    return current;
+}
 static bool UnFree(MallocMetadata* block){
     block->is_free=false;
     free_blocks--;
@@ -80,8 +92,9 @@ static MallocMetadata * allocateMetadataAndMem(size_t s){
         metadata->prev=NULL;
     }
     else{
-        BlockListTail->next= metadata;
-        metadata->prev= BlockListTail;
+        MallocMetadata* tail=getListTail();
+        tail->next= metadata;
+        metadata->prev= tail;
         metadata->next=NULL;
         BlockListTail= metadata;
     }
@@ -107,24 +120,49 @@ void freeMetaData(MallocMetadata* metadata){
     metadata->is_free=true;
     free_blocks++;
     free_bytes+=metadata->size;
-    if (metadata->prev->is_free && metadata->next->is_free){
-        metadata->prev->size+=metadata->next->size + metadata->size +2* sizeof(MallocMetadata);
+    if(metadata->prev==NULL && metadata->next==NULL){
+        return;
+    }
+    if (metadata->prev != NULL && metadata->prev->is_free && metadata->next!= NULL && metadata->next->is_free){
+        metadata->prev->size+=metadata->next->size + metadata->size + 2* sizeof(MallocMetadata);
         metadata->prev->next= metadata->next->next;
-        metadata->next->next->prev= metadata->prev;
-    }else if(metadata->prev->is_free){
+        if(metadata->next->next!=NULL) {
+            metadata->next->next->prev = metadata->prev;
+        }
+        free_bytes+=2* sizeof(MallocMetadata);
+        allocated_bytes+=2*sizeof(MallocMetadata);
+        free_blocks=free_blocks-2;
+        allocated_blocks=allocated_blocks-2;
+    }
+    else if(metadata->prev != NULL && metadata->prev->is_free){
         metadata->prev->size+= metadata->size+sizeof(MallocMetadata);
         metadata->prev->next= metadata->next;
-        metadata->next->prev= metadata->prev;
-    }else if(metadata->next->is_free){
+        if(metadata->next!=NULL) {
+            metadata->next->prev = metadata->prev;
+        }
+        free_bytes+=sizeof(MallocMetadata);
+        allocated_bytes+=sizeof(MallocMetadata);
+        free_blocks--;
+        allocated_blocks--;
+    }else if(metadata->next != NULL && metadata->next->is_free){
         metadata->size+= metadata->next->size+sizeof(MallocMetadata);
         metadata->next= metadata->next->next;
-        metadata->next->prev=metadata;
+        if(metadata->next!=NULL) {
+            metadata->next->prev = metadata;
+        }
+        free_bytes+=sizeof(MallocMetadata);
+        allocated_bytes+=sizeof(MallocMetadata);
+        free_blocks--;
+        allocated_blocks--;
+
     }
 }
 
 MallocMetadata* split(MallocMetadata* block, size_t size){
     size_t total_size= block->size;
-    MallocMetadata* new_block= (MallocMetadata*)(block+sizeof(MallocMetadata)+ size);
+    unsigned long long new_block_v= ( (unsigned long long) block + (unsigned long long) sizeof(MallocMetadata) + (unsigned long long)size);
+    void* current_sbrk= sbrk(0);
+    MallocMetadata* new_block=(MallocMetadata*) new_block_v;
     new_block->size=total_size-size-sizeof(MallocMetadata);
     new_block->is_free=true;
     new_block->next=block->next;
@@ -133,7 +171,7 @@ MallocMetadata* split(MallocMetadata* block, size_t size){
     block->size=size;
     allocated_blocks++;
     allocated_bytes=allocated_bytes-sizeof(MallocMetadata);
-    free_blocks++;
+    //free_blocks++;
     free_bytes=free_bytes-sizeof(MallocMetadata);
     return block;
 }
@@ -142,42 +180,49 @@ MallocMetadata* enlargeWilderness(size_t s){
     if (s<0 || s>100000000){
         return NULL;
     }
-    size_t addition=s-BlockListTail->size;
+    MallocMetadata* tail=getListTail();
+    size_t addition=s-tail->size;
     void * ptr= sbrk(addition);
     if((ptr==(void*)(-1))){
         return NULL;
     }
 
     allocated_bytes+= addition;
-    BlockListTail->size=s;
-    BlockListTail->is_free= false;
+    tail->size=s;
+    tail->is_free= false;
+    BlockListTail=tail;
     return BlockListTail;
 }
 
-void* smalloc(size_t size){
-
-    unsigned int s=size; //check conversion
-    if (s<0 || size>100000000){
+void* smalloc(size_t size) {
+    unsigned int s = size; //check conversion
+    if (s <= 0 || size > 100000000) {
         return NULL;
     }
-    if (s>=131072){
-        unsigned long long* ptr= (unsigned long long*)allocateMmap(s);
-        return  ptr++;
-    }else {
+    if (s >= 131072) {
+        unsigned long long *ptr = (unsigned long long *) allocateMmap(s);
+        return ptr++;
+    } else {
         void *ptr;
         MallocMetadata *block = findBlock(size);
         if (!block) {
-            if (BlockListTail == NULL || BlockListTail->is_free == false) {
-                enlargeWilderness(size);
+            MallocMetadata* tail=getListTail();
+            if (tail != NULL && tail->is_free == true) {
+                block = enlargeWilderness(size);
+                UnFree(block);
             } else {
                 block = allocateMetadataAndMem(size);
+                //UnFree(block);
             }
         } else {
             if (block->size >= 128 + sizeof(MallocMetadata) + size) {
-                block = split(block, size);
+                MallocMetadata *block_n = split(block, size);
+                block = block_n;
+                free_blocks++;
             }
+            UnFree(block);
         }
-        UnFree(block);
+
         ptr = getStart(block);
         return ptr;
     }
@@ -194,6 +239,7 @@ void sfree (void* p){
         unsigned long long* ptr= (unsigned long long*)p;
         ptr--;
         munmap(ptr, *ptr);
+        return;
     }
     if(metadata->is_free){
         return;
@@ -218,14 +264,22 @@ size_t _num_meta_data_bytes(){
 }
 
 void* scalloc(size_t num, size_t size){
+    bool prev_free=true;
     MallocMetadata* metadata= findBlock(num*size);
     if (metadata== NULL){
+        prev_free=false;
         metadata= allocateMetadataAndMem(num*size);
         if (metadata==NULL)
             return NULL;
     }
+    if(prev_free){
+        free_blocks--;
+        free_bytes=free_bytes-metadata->size;
+        metadata->is_free=false;
+    }
     return memset(getStart(metadata), 0, num*size);
 }
+
 
 void* srealloc(void* oldp, size_t size) {
     if (oldp == NULL){
@@ -258,4 +312,13 @@ size_t _num_allocated_bytes(){
 size_t _size_meta_data(){
     return sizeof(MallocMetadata);
 }
- 
+
+
+void printBlockList(){
+    MallocMetadata* current= BlockList;
+    while(current!=NULL){
+        std::cout<< "Metadata size: " << current->size <<" metadata is free? "<< current->is_free<<std::endl;
+        current=current->next;
+    }
+    std::cout<< "Done!" <<std::endl;
+}
