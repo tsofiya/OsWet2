@@ -98,7 +98,7 @@ void freeMetaData(MallocMetadata* metadata){
 void* smalloc(size_t size){
 
     unsigned int s=size; //check conversion
-    if (s<0 || size>100000000){
+    if (s<=0 || size>100000000){
         return NULL;
     }
     void* ptr;
@@ -144,11 +144,17 @@ size_t _num_meta_data_bytes(){
 }
 
 void* scalloc(size_t num, size_t size){
+    bool prev_free=true;
     MallocMetadata* metadata= findBlock(num*size);
     if (metadata== NULL){
+        prev_free=false;
         metadata= allocateMetadataAndMem(num*size);
         if (metadata==NULL)
             return NULL;
+    }
+    if(prev_free){
+        free_blocks--;
+        free_bytes=free_bytes-metadata->size;
     }
     return memset(getStart(metadata), 0, num*size);
 }
@@ -196,3 +202,4 @@ void printBlockList(){
     }
     std::cout<< "Done!" <<std::endl;
 }
+
