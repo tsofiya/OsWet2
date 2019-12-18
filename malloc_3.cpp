@@ -201,7 +201,8 @@ void* smalloc(size_t size) {
     }
     if (s >= 131072) {
         unsigned long long *ptr = (unsigned long long *) allocateMmap(s);
-        return ptr++;
+        ptr +=sizeof(unsigned long long);
+        return ptr;
     } else {
         void *ptr;
         MallocMetadata *block = findBlock(size);
@@ -240,7 +241,7 @@ void sfree (void* p){
     MallocMetadata* metadata=getMetaDataByPointer(p);
     if (metadata==NULL){
         unsigned long long* ptr= (unsigned long long*)p;
-        // ptr--;
+        ptr-=sizeof(unsigned long long );
         allocated_bytes=allocated_bytes-(*ptr);
         allocated_blocks--;
         munmap(ptr, *ptr);
@@ -294,6 +295,18 @@ void* srealloc(void* oldp, size_t size) {
         return NULL;
     }
     MallocMetadata* oldMetaData= getMetaDataByPointer(oldp);
+    if (oldMetaData==NULL){
+        void* r= smalloc(size);
+        unsigned long long* ptr= (unsigned long long*)oldp;
+        ptr-=sizeof(unsigned long long );
+        if (*ptr>size)
+            memmove(r, oldp, size);
+        else
+            memmove(r, oldp, *ptr);
+        sfree(oldp);
+        return r;
+
+    }
     if (oldMetaData->size>=size) {
         return (oldMetaData + sizeof(MallocMetadata));
     }
@@ -376,12 +389,16 @@ void* srealloc(void* oldp, size_t size) {
         freeMetaData(oldMetaData);
         return ptr;
     }
-    if(newMetaData==NULL){
-        return NULL;
-    }
     memmove(getStart(newMetaData), getStart(oldMetaData), oldMetaData->size);
-    oldMetaData->is_free= true;
     freeMetaData(oldMetaData);
+    newMetaData->is_free=false;
+    free_bytes=free_bytes-newMetaData->size;
+    free_blocks--;
+    if (newMetaData->size-size>=150) {
+        split(newMetaData, size);
+        free_bytes+=newMetaData->next->size;
+        free_bytes=free_bytes+sizeof(MallocMetadata);
+    }
     return (newMetaData+sizeof(MallocMetadata));
 }
 
