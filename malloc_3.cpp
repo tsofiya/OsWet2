@@ -297,7 +297,7 @@ void* srealloc(void* oldp, size_t size) {
     if (oldMetaData->size>=size) {
         return (oldMetaData + sizeof(MallocMetadata));
     }
-    if(oldMetaData->next!=NULL && oldMetaData->next->is_free && (oldMetaData->size+oldMetaData->next->size>=size)){
+    if(oldMetaData->next!=NULL && oldMetaData->next->is_free && (oldMetaData->size+oldMetaData->next->size +sizeof(MallocMetadata)>=size)){
         size_t free_size=oldMetaData->next->size;
         (oldMetaData->size)+=oldMetaData->next->size +sizeof(MallocMetadata);
         oldMetaData->next=oldMetaData->next->next;
@@ -316,7 +316,7 @@ void* srealloc(void* oldp, size_t size) {
         }
         return (oldMetaData+sizeof(MallocMetadata));
     }
-    else if(oldMetaData->prev!=NULL && oldMetaData->prev->is_free && (oldMetaData->size+oldMetaData->prev->size>=size)){
+    else if(oldMetaData->prev!=NULL && oldMetaData->prev->is_free && (oldMetaData->size+oldMetaData->prev->size +sizeof(MallocMetadata)>=size)){
         size_t free_size=oldMetaData->prev->size;
         (oldMetaData->prev->size)+=oldMetaData->size +sizeof(MallocMetadata);
         oldMetaData->prev->next=oldMetaData->next;
@@ -330,7 +330,6 @@ void* srealloc(void* oldp, size_t size) {
         oldMetaData->prev->is_free=false;
         memcpy(getStart(oldMetaData->prev), getStart(oldMetaData), oldMetaData->size);
         if (oldMetaData->prev->size >=150+size){
-
             split(oldMetaData->prev, size);
             free_bytes+=oldMetaData->prev->next->size;
             oldMetaData->prev->next->is_free=true;
@@ -339,7 +338,7 @@ void* srealloc(void* oldp, size_t size) {
     }
 
 
-    else if (oldMetaData->prev!=NULL && oldMetaData->prev->is_free && oldMetaData->next!=NULL && oldMetaData->next->is_free &&(oldMetaData->size+oldMetaData->prev->size+oldMetaData->next->size>=size)){
+    else if (oldMetaData->prev!=NULL && oldMetaData->prev->is_free && oldMetaData->next!=NULL && oldMetaData->next->is_free &&(oldMetaData->size+oldMetaData->prev->size+oldMetaData->next->size +2*sizeof(MallocMetadata)>=size)){
         size_t free_size=oldMetaData->next->size+oldMetaData->prev->size;
         oldMetaData->prev->size+=oldMetaData->size+oldMetaData->next->size+2*sizeof(MallocMetadata);
         oldMetaData->prev->next=oldMetaData->next->next;
@@ -371,12 +370,16 @@ void* srealloc(void* oldp, size_t size) {
 
     MallocMetadata* newMetaData= findBlock(size);
     if (newMetaData==NULL) {
-        newMetaData = allocateMetadataAndMem(size);
+        void* ptr = (smalloc(size));
+        memmove(ptr, getStart(oldMetaData), oldMetaData->size);
+        oldMetaData->is_free= true;
+        freeMetaData(oldMetaData);
+        return ptr;
     }
     if(newMetaData==NULL){
         return NULL;
     }
-    memcpy(getStart(newMetaData), getStart(oldMetaData), oldMetaData->size-32);
+    memmove(getStart(newMetaData), getStart(oldMetaData), oldMetaData->size);
     oldMetaData->is_free= true;
     freeMetaData(oldMetaData);
     return (newMetaData+sizeof(MallocMetadata));
